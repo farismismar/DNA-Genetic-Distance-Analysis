@@ -14,10 +14,14 @@ from io import StringIO
 import pdb
 
 url = 'https://www.familytreedna.com/public/J2-M67Arab?iframe=yresults'
-kit_number = '894302'
+kit_number = '999999'
 num_matches = 10
 
+####
+cols_ = ['Row Number', 'Name', 'Kit Number', 'Paternal Ancestor Name', 'Country', 'Haplogroup']
+
 def retrieve_data(url, file_name='source.csv'):
+    global cols_
     print('Retrieving the data from the URL.')
     # This code captures 1000000 rows Y-DNA111 
     # This is an HTTP POST method.
@@ -59,6 +63,16 @@ def retrieve_data(url, file_name='source.csv'):
         df_html_tables['DYS393'] = pd.to_numeric(df_html_tables['DYS393'], errors='coerce')
         df_html_tables = df_html_tables.loc[~df_html_tables['DYS393'].isna(), :]
 
+    # Drop any row that has missing data (it is not Y-DNA111):
+    cols = []
+    for c in cols_:
+        if c in df_html_tables:
+            cols.append(c)
+            
+    # Keep these
+    idx_to_keep = df_html_tables.drop(cols, axis=1).dropna().index
+    df_html_tables = df_html_tables.loc[idx_to_keep, :]
+        
     df_html_tables.reset_index(inplace=True, drop=True)
     
     print('Done retrieving the data from the URL.')
@@ -73,7 +87,7 @@ def retrieve_data(url, file_name='source.csv'):
     
   
 def load_data(file_name='source.csv'):
-    global kit_number
+    global kit_number, cols_
     
     df = pd.read_csv(file_name, encoding='UTF-8')
     df.rename({'ï»¿Row Number': 'Row Number'}, axis=1, inplace=True)
@@ -87,10 +101,7 @@ def load_data(file_name='source.csv'):
     # df.dropna(axis=0, how='any', inplace=True)
     df = df.reset_index(drop=True)
     
-    # Which columns are needed for the DNA similarity distance and which are not
-    # Certainly not these.
-    cols_ = ['Row Number', 'Name', 'Kit Number', 'Paternal Ancestor Name', 'Country', 'Haplogroup']
-    
+    # Which columns are needed for the DNA similarity distance and which are not:
     cols = []
     for c in cols_:
         if c in df.columns:
@@ -103,6 +114,7 @@ def load_data(file_name='source.csv'):
 
 
 def parse_columns(df_dna):
+    # TODO:  This function still needs improvements:
     # Columns that have locii
     locii_cols = []
     nonlocii_cols = []
