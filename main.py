@@ -11,9 +11,11 @@ import os
 import numpy as np
 from io import StringIO
 
+import pdb
+
 url = 'https://www.familytreedna.com/public/J2-M67Arab?iframe=yresults'
-kit_number = '99999'
-num_matches = 5
+kit_number = '894302'
+num_matches = 10
 
 def retrieve_data(url, file_name='source.csv'):
     print('Retrieving the data from the URL.')
@@ -52,10 +54,10 @@ def retrieve_data(url, file_name='source.csv'):
     
     if 'Row Number' in df_html_tables.columns:
         df_html_tables['Row Number'] = pd.to_numeric(df_html_tables['Row Number'], errors='coerce')
-        df_html_tables.dropna(axis=0, how='any', inplace=True)
+        df_html_tables = df_html_tables.loc[~df_html_tables['Row Number'].isna(), :]
     elif 'DYS393' in df_html_tables.columns:
         df_html_tables['DYS393'] = pd.to_numeric(df_html_tables['DYS393'], errors='coerce')
-        df_html_tables.dropna(axis=0, how='any', inplace=True)
+        df_html_tables = df_html_tables.loc[~df_html_tables['DYS393'].isna(), :]
 
     df_html_tables.reset_index(inplace=True, drop=True)
     
@@ -81,9 +83,9 @@ def load_data(file_name='source.csv'):
     
     if df[df['Kit Number'] == kit_number].shape[0] == 0:
         raise ValueError(f"Kit number {kit_number} non-existent.")
-        
-    df.dropna(axis=0, how='any', inplace=True)
-    df = df.reset_index(drop=True)    
+    
+    # df.dropna(axis=0, how='any', inplace=True)
+    df = df.reset_index(drop=True)
     
     # Which columns are needed for the DNA similarity distance and which are not
     # Certainly not these.
