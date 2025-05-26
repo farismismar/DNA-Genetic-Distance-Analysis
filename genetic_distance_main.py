@@ -42,7 +42,7 @@ def read_y111_data(filename: str) -> List[dict]:
     Returns a list of dictionaries with 'Kit Number' and 'Markers' (list of lists).
     """
     data = []
-    with open(filename, 'r', newline='', encoding='utf-8') as csvfile:
+    with open(filename, 'r', newline='', encoding='utf-8-sig') as csvfile:
         reader = csv.DictReader(csvfile)
         marker_columns = [col for col in reader.fieldnames if col != 'Kit Number' and col[0] in ['D', 'C', 'Y']]
         
