@@ -13,7 +13,7 @@ import numbers
 user_kit_id = '999999'  # Replace with your actual Y111 kit ID from FamilyTreeDNA
 output_file = "output.csv"  # Replace with your CSV file path
 url = None  # 'http://www.familytreedna.com/public/J2-M67Arab?iframe=ydna-results-overview'  # Replace with familytreedna.com website (or None)
-input_file = 'J2a4b.csv'
+input_file = 'j2_middle_east_y111.csv'
 
 # Multi-copy find the max GD:
 # https://help.familytreedna.com/hc/en-us/articles/6019882931727-Understanding-Y-DNA-Multi-Copy-Markers
@@ -45,6 +45,8 @@ if user.shape[0] == 0:
 user_dna = user.iloc[:, first_column_idx:].values.flatten()
 
 def find_genetic_distance(source, target):
+    target = np.array(target)
+    
     # compute null padding
     padding_length = max(source.shape[0], target.shape[0]) - min(source.shape[0], target.shape[0])
 
@@ -57,26 +59,27 @@ def find_genetic_distance(source, target):
     genetic_distance = 0
     for s, t in zip(source, target):
         # Missing marker is 1 unless both are missing then 0.
-        if s is None and t is None:
+        if (pd.isnull(s) and pd.isnull(t)):
             continue
         
-        if s is not None and t is None:
+        if not pd.isnull(s) and pd.isnull(t):
             genetic_distance += 1
             continue
         
-        if s is None and t is not None:
+        if pd.isnull(s) and not pd.isnull(t):
             genetic_distance += 1
             continue
-        
+
         if (isinstance(s, numbers.Number) and isinstance(t, numbers.Number)):
             genetic_distance += abs(int(s) - int(t))
+        
         else:
             # parse the multi-copy and repeat the computation
             source_copies = np.array(sorted(list(set([int(x) for x in s.split('-')]))))
             target_copies = np.array(sorted(list(set([int(x) for x in t.split('-')]))))
             gen_dist_i = find_genetic_distance(source_copies, target_copies)
             genetic_distance += gen_dist_i
-
+            
     return genetic_distance
 
 
