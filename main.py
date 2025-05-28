@@ -79,19 +79,6 @@ def retrieve_data(url):
     if 'Row Number' in df_html_tables.columns:
         df_html_tables['Row Number'] = pd.to_numeric(df_html_tables['Row Number'], errors='coerce')
         df_html_tables = df_html_tables.loc[~df_html_tables['Row Number'].isna(), :]
-    elif 'DYS393' in df_html_tables.columns:
-        df_html_tables['DYS393'] = pd.to_numeric(df_html_tables['DYS393'], errors='coerce')
-        df_html_tables = df_html_tables.loc[~df_html_tables['DYS393'].isna(), :]
-
-    # Drop any row that has missing data (it is not Y-DNA111):
-    cols = []
-    for c in cols_:
-        if c in df_html_tables:
-            cols.append(c)
-            
-    # Keep these
-    idx_to_keep = df_html_tables.drop(cols, axis=1).dropna().index
-    df_html_tables = df_html_tables.loc[idx_to_keep, :]
         
     df_html_tables.reset_index(inplace=True, drop=True)
     
@@ -104,7 +91,7 @@ def retrieve_data(url):
         return False
     
     return True
-
+    
 
 def find_genetic_distance(source, target):
     target = np.array(target)
