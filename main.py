@@ -97,6 +97,7 @@ def find_genetic_distance(source, target):
     target = np.array(target)
     
     genetic_distance = 0
+    gen_dist_i = 0
     for s, t in zip(source, target):
         # Missing marker is 1 unless both are missing then 0.
         if (pd.isnull(s) and pd.isnull(t)):
@@ -111,7 +112,8 @@ def find_genetic_distance(source, target):
             continue
 
         if (isinstance(s, numbers.Number) and isinstance(t, numbers.Number)):
-            genetic_distance += abs(int(s) - int(t))
+            gen_dist_i = abs(int(s) - int(t))
+            genetic_distance += gen_dist_i
         
         else:
             # parse the multi-copy and repeat the computation
@@ -119,7 +121,9 @@ def find_genetic_distance(source, target):
             target_copies = np.array(sorted(list(set([int(x) for x in t.split('-')]))))
             gen_dist_i = find_genetic_distance(source_copies, target_copies)
             genetic_distance += gen_dist_i
-            
+        
+        # print(s, t, gen_dist_i, genetic_distance)
+
     return genetic_distance
 
 
