@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Created on Mon May 26 20:57:07 2025
+Created on Sat Mar 14 18:58:12 2026
 
 @author: farismismar
 """
+
+from itertools import permutations
 
 import numpy as np
 import pandas as pd
@@ -13,7 +15,7 @@ import numbers
 import os
 from io import StringIO
 
-user_kit_id = '999999'  # Replace with your actual Y111 kit ID from FamilyTreeDNA
+user_kit_id = 'xxxxx'  # Replace with your actual Y111 kit ID from FamilyTreeDNA
 output_file = "output.csv"  # Replace with your CSV file path
 url = 'https://www.familytreedna.com/public/J2-Arab?iframe=ydna-results-overview'  # Replace with familytreedna.com website (or None)
 input_file = 'sample_familytreedna.csv'
@@ -37,9 +39,6 @@ def retrieve_data(url):
     
     if url is None:
         return False
-    
-    cols_ = ['Row Number', 'Name', 'Kit Number', 'Paternal Ancestor Name', 
-         'Country', 'Haplogroup']
 
     print('Retrieving the data from the URL.')
     # This code captures 1000000 rows Y-DNA111 
@@ -79,6 +78,9 @@ def retrieve_data(url):
     if 'Row Number' in df_html_tables.columns:
         df_html_tables['Row Number'] = pd.to_numeric(df_html_tables['Row Number'], errors='coerce')
         df_html_tables = df_html_tables.loc[~df_html_tables['Row Number'].isna(), :]
+    elif 'DYS393' in df_html_tables.columns:
+        df_html_tables['DYS393'] = pd.to_numeric(df_html_tables['DYS393'], errors='coerce')
+        df_html_tables.dropna(axis=0, how='any', inplace=True)
         
     df_html_tables.reset_index(inplace=True, drop=True)
     
@@ -91,9 +93,9 @@ def retrieve_data(url):
         return False
     
     return True
-    
 
-def find_genetic_distance(source, target):
+
+def find_genetic_distance_v1(source, target):
     target = np.array(target)
     
     genetic_distance = 0
@@ -127,7 +129,54 @@ def find_genetic_distance(source, target):
     return genetic_distance
 
 
+def find_genetic_distance(source, target):
+    target = np.array(target)
+
+    genetic_distance = 0
+    gen_dist_i = 0
+    for s, t in zip(source, target):
+        # Missing marker is 1 unless both are missing then 0.
+        if pd.isnull(s) and pd.isnull(t):
+            continue
+
+        if not pd.isnull(s) and pd.isnull(t):
+            genetic_distance += 1
+            continue
+
+        if pd.isnull(s) and not pd.isnull(t):
+            genetic_distance += 1
+            continue
+
+        if isinstance(s, numbers.Number) and isinstance(t, numbers.Number):
+            gen_dist_i = abs(int(s) - int(t))
+            genetic_distance += gen_dist_i
+
+        else:
+            # FIX 1: Removed set() to preserve homozygous duplicate alleles (e.g. "14-14" → [14, 14])
+            source_copies = sorted([int(x) for x in s.split('-')])
+            target_copies = sorted([int(x) for x in t.split('-')])
+
+            # FIX 2: Use minimum-cost permutation matching for 3+ allele cases
+            if len(source_copies) == len(target_copies):
+                best = float('inf')
+                for perm in permutations(target_copies):
+                    cost = sum(abs(a - b) for a, b in zip(source_copies, perm))
+                    best = min(best, cost)
+                gen_dist_i = best
+            else:
+                # Unequal allele counts: fall back to recursive distance on arrays
+                gen_dist_i = find_genetic_distance(
+                    np.array(source_copies), np.array(target_copies)
+                )
+
+            genetic_distance += gen_dist_i
+
+    return genetic_distance
+
+
 def relation(gd):
+    if gd < 0:
+        return 'Invalid distance'
     if 0 <= gd <= 2:
         return 'Immediate'
     if 3 <= gd <= 5:
@@ -140,7 +189,9 @@ def relation(gd):
     
 # 1) Retrieve the file from the URL
 if not retrieve_data(url):
-    raise RuntimeError(f"Unable to fetch data from {url}.")
+    # raise RuntimeError(f"Unable to fetch data from {url}.")
+    print(f"Unable to fetch data from {url}.")
+    print(f"Falling back to cached file {input_file}.")
 
 # 2) Read the file
 df = pd.read_csv(input_file)
