@@ -152,11 +152,10 @@ def find_genetic_distance(source, target):
             genetic_distance += gen_dist_i
 
         else:
-            # FIX 1: Removed set() to preserve homozygous duplicate alleles (e.g. "14-14" → [14, 14])
             source_copies = sorted([int(x) for x in s.split('-')])
             target_copies = sorted([int(x) for x in t.split('-')])
 
-            # FIX 2: Use minimum-cost permutation matching for 3+ allele cases
+            # Optimization through permutation matching for 3+ allele cases (instead of recursion)
             if len(source_copies) == len(target_copies):
                 best = float('inf')
                 for perm in permutations(target_copies):
@@ -164,10 +163,8 @@ def find_genetic_distance(source, target):
                     best = min(best, cost)
                 gen_dist_i = best
             else:
-                # Unequal allele counts: fall back to recursive distance on arrays
-                gen_dist_i = find_genetic_distance(
-                    np.array(source_copies), np.array(target_copies)
-                )
+                # Unequal allele counts: must do recursive distance on arrays
+                gen_dist_i = find_genetic_distance(np.array(source_copies), np.array(target_copies))
 
             genetic_distance += gen_dist_i
 
@@ -194,7 +191,7 @@ if not retrieve_data(url):
     print(f"Falling back to cached file {input_file}.")
 
 # 2) Read the file
-df = pd.read_csv(input_file)
+df = pd.read_csv(input_file, encoding="utf-8", encoding_errors="ignore")
 first_column = df.filter(regex='^DY.*').columns[0]
 first_column_idx = df.columns.get_loc(first_column)
 
