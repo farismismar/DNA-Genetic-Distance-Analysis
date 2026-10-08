@@ -13,15 +13,21 @@ import pandas as pd
 import numbers
 
 import os
+from glob import glob
 from io import StringIO
 
 user_kit_id = 'xxxxx'  # Replace with your actual Y111 kit ID from FamilyTreeDNA
 output_file = "output.csv"  # Replace with your CSV file path
+input_html_file = 'html_family_tree.html'  # Replace with a results page saved from familytreedna.com, e.g. 'page1.html' or 'pages/*.html' for several pages (or None)
 url = 'https://www.familytreedna.com/public/J2-Arab?iframe=ydna-results-overview'  # Replace with familytreedna.com website (or None)
-input_file = 'sample_familytreedna.csv'
+converted_csv_file = 'familytreedna.csv'
 
 # Multi-copy find the max GD:
 # https://help.familytreedna.com/hc/en-us/articles/6019882931727-Understanding-Y-DNA-Multi-Copy-Markers
+# https://help.familytreedna.com/hc/en-us/articles/6019925167631-Understanding-Y-DNA-Genetic-Distance
+
+# Number of markers reported in each multi-copy column (all other columns hold one marker).
+multi_copy_markers = {'DYS385': 2, 'DYS459': 2, 'DYS464': 4, 'YCAII': 2, 'CDY': 2, 'DYF395S1': 2, 'DYS413': 2}
 
 '''
 Genetic distances on steroids:
@@ -34,9 +40,58 @@ GD 8+: Increasingly speculative, often requiring deeper haplogroup analysis or o
 
 '''
 
+def parse_html(html_output):
+    # Parse the html code to generate a table.
+    df_html_tables = pd.read_html(StringIO(html_output))
+
+    # A saved page nests the results inside a layout table: keep the innermost table that lists the kits.
+    with_kits = [table for table in df_html_tables if 'Kit Number' in table.columns]
+    df_html_tables = with_kits[-1] if len(with_kits) > 0 else df_html_tables[0]
+
+    # Keep the rows of the kits only (drops the subgroup header rows).
+    if 'Row Number' in df_html_tables.columns:
+        df_html_tables['Row Number'] = pd.to_numeric(df_html_tables['Row Number'], errors='coerce')
+        df_html_tables = df_html_tables.loc[~df_html_tables['Row Number'].isna(), :]
+    elif 'DYS393' in df_html_tables.columns:
+        df_html_tables['DYS393'] = pd.to_numeric(df_html_tables['DYS393'], errors='coerce')
+        df_html_tables = df_html_tables.loc[~df_html_tables['DYS393'].isna(), :]
+
+    return df_html_tables.reset_index(drop=True)
+
+
+def read_input_html_files(input_html_file):
+    global converted_csv_file
+
+    if input_html_file is None:
+        return False
+
+    file_names = sorted(glob(input_html_file))
+    if len(file_names) == 0:
+        print(f"Unable to find {input_html_file}.")
+        return False
+
+    try:
+        pages = []
+        for file_name in file_names:
+            with open(file_name, encoding="utf-8", errors="ignore") as f:
+                pages.append(parse_html(f.read()))
+            print(f'Read {pages[-1].shape[0]} kits from {file_name}.')
+
+        # Several saved pages of the same project are stacked.
+        df_html_tables = pd.concat(pages, ignore_index=True)
+        df_html_tables = df_html_tables.drop_duplicates(subset='Kit Number')
+        df_html_tables.to_csv(converted_csv_file, index=False)
+        print(f'Created {converted_csv_file}.')
+    except Exception as e:
+        print(f"Unable to generate table due to {e}.")
+        return False
+
+    return True
+
+
 def retrieve_data(url):
-    global input_file
-    
+    global converted_csv_file
+
     if url is None:
         return False
 
@@ -69,26 +124,16 @@ def retrieve_data(url):
   
     try:
         html_output = os.popen(system_command).read()
-        # Parse the html code to generate a table.
-        df_html_tables = pd.read_html(StringIO(html_output))[0]    
+        df_html_tables = parse_html(html_output)
     except Exception as e:
         print(f"Unable to generate table due to {e}.")
         return False
-    
-    if 'Row Number' in df_html_tables.columns:
-        df_html_tables['Row Number'] = pd.to_numeric(df_html_tables['Row Number'], errors='coerce')
-        df_html_tables = df_html_tables.loc[~df_html_tables['Row Number'].isna(), :]
-    elif 'DYS393' in df_html_tables.columns:
-        df_html_tables['DYS393'] = pd.to_numeric(df_html_tables['DYS393'], errors='coerce')
-        df_html_tables.dropna(axis=0, how='any', inplace=True)
-        
-    df_html_tables.reset_index(inplace=True, drop=True)
-    
+
     print('Done retrieving the data from the URL.')
     
     try:
-        df_html_tables.to_csv(input_file, index=False)
-        print(f'Created {input_file}.')
+        df_html_tables.to_csv(converted_csv_file, index=False)
+        print(f'Created {converted_csv_file}.')
     except:
         return False
     
@@ -129,46 +174,55 @@ def find_genetic_distance_v1(source, target):
     return genetic_distance
 
 
+def find_marker_distance(s, t):
+    # Multi-copy markers are reported as the value of each copy separated by hyphens.
+    source_copies = [int(float(x)) for x in str(s).split('-')]
+    target_copies = [int(float(x)) for x in str(t).split('-')]
+
+    if len(source_copies) > len(target_copies):
+        source_copies, target_copies = target_copies, source_copies
+
+    # Marker changes are step-wise, on the best pairing of the copies regardless of their order.
+    # A null value (0) against a tested value is 1 (infinite allele).
+    best = float('inf')
+    for perm in permutations(target_copies, len(source_copies)):
+        cost = sum(1 if a != b and 0 in (a, b) else abs(a - b) for a, b in zip(source_copies, perm))
+        best = min(best, cost)
+
+    # Copy changes: a different number of copies is 1, however many copies differ (infinite allele).
+    if len(source_copies) != len(target_copies):
+        best += 1
+
+    return best
+
+
 def find_genetic_distance(source, target):
     target = np.array(target)
 
     genetic_distance = 0
-    gen_dist_i = 0
     for s, t in zip(source, target):
-        # Missing marker is 1 unless both are missing then 0.
-        if pd.isnull(s) and pd.isnull(t):
+        # A marker that is not tested in both kits is not compared.
+        if pd.isnull(s) or pd.isnull(t):
             continue
 
-        if not pd.isnull(s) and pd.isnull(t):
-            genetic_distance += 1
-            continue
-
-        if pd.isnull(s) and not pd.isnull(t):
-            genetic_distance += 1
-            continue
-
-        if isinstance(s, numbers.Number) and isinstance(t, numbers.Number):
-            gen_dist_i = abs(int(s) - int(t))
-            genetic_distance += gen_dist_i
-
-        else:
-            source_copies = sorted([int(x) for x in s.split('-')])
-            target_copies = sorted([int(x) for x in t.split('-')])
-
-            # Optimization through permutation matching for 3+ allele cases (instead of recursion)
-            if len(source_copies) == len(target_copies):
-                best = float('inf')
-                for perm in permutations(target_copies):
-                    cost = sum(abs(a - b) for a, b in zip(source_copies, perm))
-                    best = min(best, cost)
-                gen_dist_i = best
-            else:
-                # Unequal allele counts: must do recursive distance on arrays
-                gen_dist_i = find_genetic_distance(np.array(source_copies), np.array(target_copies))
-
-            genetic_distance += gen_dist_i
+        genetic_distance += find_marker_distance(s, t)
 
     return genetic_distance
+
+
+def verify_genetic_distance():
+    # Worked examples published by FamilyTreeDNA in the two articles above: (person A, person B, GD).
+    examples = [(15, 17, 2),                               # step-wise
+                (15, 0, 1),                                # null value
+                ('15-15-15-16', '15-15-16-16', 1),         # one copy differs
+                ('15-15-15-16', '15-15-16-15', 0),         # same copies in a different order
+                ('15-15-15-16-16-16', '15-15-16-16', 1),   # two extra copies
+                ('15-15-15-16', '15-15-16-16-16', 2)]      # one copy differs and one extra copy
+
+    for a, b, expected in examples:
+        gd = find_genetic_distance([a], [b])
+        if gd != expected:
+            raise ValueError(f"Error: genetic distance of {a} and {b} is {gd} instead of {expected}.")
 
 
 def relation(gd):
@@ -184,14 +238,14 @@ def relation(gd):
         return 'Deeper analysis needed'
     
     
-# 1) Retrieve the file from the URL
-if not retrieve_data(url):
+# 1) Retrieve the file from the saved page(s), otherwise from the URL
+if not read_input_html_files(input_html_file) and not retrieve_data(url):
     # raise RuntimeError(f"Unable to fetch data from {url}.")
-    print(f"Unable to fetch data from {url}.")
-    print(f"Falling back to cached file {input_file}.")
+    print(f"Unable to fetch data from {input_html_file or url}.")
+    print(f"Falling back to cached file {converted_csv_file}.")
 
 # 2) Read the file
-df = pd.read_csv(input_file, encoding="utf-8", encoding_errors="ignore")
+df = pd.read_csv(converted_csv_file, encoding="utf-8", encoding_errors="ignore", dtype={'Kit Number': str})
 first_column = df.filter(regex='^DY.*').columns[0]
 first_column_idx = df.columns.get_loc(first_column)
 
@@ -204,11 +258,28 @@ user = df[df['Kit Number'] == user_kit_id]
 if user.shape[0] == 0:
     raise ValueError(f"Error: {user_kit_id} not found.")
     
-user = user.iloc[:, first_column_idx:].values.flatten()
+markers = df.iloc[:, first_column_idx:].copy()
+
+# DYS389ii is reported as the sum of DYS389i and DYS389ii: compare its own part only,
+# otherwise a change in DYS389i is counted twice.
+if 'DYS389i' in markers.columns and 'DYS389ii' in markers.columns:
+    dys389i = pd.to_numeric(markers['DYS389i'], errors='coerce')
+    dys389ii = pd.to_numeric(markers['DYS389ii'], errors='coerce')
+    markers['DYS389ii'] = (dys389ii - dys389i).where((dys389i > 0) & (dys389ii > 0), dys389ii)
+
+user = markers.loc[user.index[0]].values
 
 # 4) Compute the distance and generate output file.
-df['genetic_distance'] = df.iloc[:, first_column_idx:].apply(lambda x: find_genetic_distance(user, x), axis=1)
-df['relation'] = df['genetic_distance'].apply(relation)
+verify_genetic_distance()
+df['genetic_distance'] = markers.apply(lambda x: find_genetic_distance(user, x), axis=1)
 
-df.sort_values(by='genetic_distance', ascending=True, inplace=True)
+# Number of markers tested in both kits (12, 25, 37, 67 or 111), which the genetic distance is computed on.
+markers_per_column = np.array([multi_copy_markers.get(column, 1) for column in markers.columns])
+df['markers_compared'] = ((markers.notna().values & pd.notnull(user)) * markers_per_column).sum(axis=1)
+
+df['relation'] = df['genetic_distance'].apply(relation)
+# The guidelines above are for Y-DNA 111: kits compared on fewer markers are not labeled.
+df.loc[df['markers_compared'] < 111, 'relation'] = 'Fewer than 111 markers compared'
+
+df.sort_values(by=['markers_compared', 'genetic_distance'], ascending=[False, True], inplace=True)
 df.to_csv(output_file, index=False)
