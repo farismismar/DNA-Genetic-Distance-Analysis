@@ -12,13 +12,14 @@ import numpy as np
 import pandas as pd
 import numbers
 
-import os
-from glob import glob
+import subprocess
 from io import StringIO
+from urllib.parse import urlparse, urljoin
+import requests
+from bs4 import BeautifulSoup
 
-user_kit_id = 'xxxxx'  # Replace with your actual Y111 kit ID from FamilyTreeDNA
+user_kit_id = 'XXXXXX'      # Replace with your actual Y111 kit ID from FamilyTreeDNA
 output_file = "output.csv"  # Replace with your CSV file path
-input_html_file = 'html_family_tree.html'  # Replace with a results page saved from familytreedna.com, e.g. 'page1.html' or 'pages/*.html' for several pages (or None)
 url = 'https://www.familytreedna.com/public/J2-Arab?iframe=ydna-results-overview'  # Replace with familytreedna.com website (or None)
 converted_csv_file = 'familytreedna.csv'
 
@@ -59,85 +60,84 @@ def parse_html(html_output):
     return df_html_tables.reset_index(drop=True)
 
 
-def read_input_html_files(input_html_file):
+def retrieve_data(url, max_records=10_000):
     global converted_csv_file
 
-    if input_html_file is None:
+    if not url or max_records <= 0:
         return False
 
-    file_names = sorted(glob(input_html_file))
-    if len(file_names) == 0:
-        print(f"Unable to find {input_html_file}.")
-        return False
+    print(f'Retrieving up to {max_records:,} records.')
+
+    session = requests.Session()
+    session.headers.update({
+        'User-Agent': (
+            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) '
+            'AppleWebKit/537.36 (KHTML, like Gecko) '
+            'Chrome/136.0.0.0 Safari/537.36'
+        ),
+        'Accept-Language': 'en-US,en;q=0.9,ar;q=0.8',
+    })
 
     try:
-        pages = []
-        for file_name in file_names:
-            with open(file_name, encoding="utf-8", errors="ignore") as f:
-                pages.append(parse_html(f.read()))
-            print(f'Read {pages[-1].shape[0]} kits from {file_name}.')
+        # Load the initial page to obtain fresh ASP.NET hidden fields.
+        response = session.get(url, timeout=60)
+        response.raise_for_status()
 
-        # Several saved pages of the same project are stacked.
-        df_html_tables = pd.concat(pages, ignore_index=True)
-        df_html_tables = df_html_tables.drop_duplicates(subset='Kit Number')
-        df_html_tables.to_csv(converted_csv_file, index=False)
-        print(f'Created {converted_csv_file}.')
+        soup = BeautifulSoup(response.text, 'html.parser')
+        form = soup.find('form')
+
+        if form is None:
+            raise ValueError('No HTML form found.')
+
+        # Preserve the form's hidden state and existing field values.
+        data = {}
+        for field in form.find_all('input'):
+            name = field.get('name')
+            if not name:
+                continue
+
+            field_type = (field.get('type') or '').lower()
+
+            if field_type in ('submit', 'button', 'image', 'file', 'reset'):
+                continue
+            if field_type in ('checkbox', 'radio') and not field.has_attr('checked'):
+                continue
+
+            data[name] = field.get('value', 'on' if field_type in (
+                'checkbox', 'radio'
+            ) else '')
+
+        # Set the requested page size and submit Update Display.
+        data['ctl00$MainContent$color1$tbPageSize'] = str(max_records)
+        data['ctl00$MainContent$color1$btnUpdateDisplay'] = 'Update Display'
+
+        action = urljoin(response.url, form.get('action') or response.url)
+
+        response = session.post(
+            action,
+            data=data,
+            headers={'Referer': response.url},
+            timeout=120
+        )
+        response.raise_for_status()
+
+        # Parse the returned page using your existing function.
+        df = parse_html(response.text)
+
+        if df is None or df.empty:
+            print('No records were parsed from the response.')
+            return False
+
+        # Avoid writing more than the requested number of records.
+        df = df.iloc[:max_records]
+        df.to_csv(converted_csv_file, index=False)
+
+        print(f'Created {converted_csv_file} with {len(df):,} records.')
+        return True
+
     except Exception as e:
-        print(f"Unable to generate table due to {e}.")
+        print(f'Unable to retrieve the data: {e}')
         return False
-
-    return True
-
-
-def retrieve_data(url):
-    global converted_csv_file
-
-    if url is None:
-        return False
-
-    print('Retrieving the data from the URL.')
-    # This code captures 1000000 rows Y-DNA111 
-    # This is an HTTP POST method.
-    system_command = f"curl -s '{url}'"
-    system_command = system_command + '\\' + '''
-      -H 'Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7' \
-      -H 'Accept-Language: en-US,en;q=0.9,ar;q=0.8' \
-      -H 'Cache-Control: no-cache' \
-      -H 'Connection: keep-alive' \
-      -H 'Content-Type: application/x-www-form-urlencoded' \
-      -b 'CookieConsent={stamp:%27-1%27%2Cnecessary:true%2Cpreferences:true%2Cstatistics:true%2Cmarketing:true%2Cmethod:%27implied%27%2Cver:1%2Cutc:1721493826898%2Cregion:%27JO%27}; BNES_CookieConsent=lvxGolPiBv1B84jtPTDcV9LSyOoydpLJpCtYbQeDiHNVK9C8jiyjszjFZdUFsSLx8jdwoHJlJNiEE0ou8rFeIaODoQpS6IN/h8+QpMIYO30OGUYNP4Dt0SJwBqijSj1vOb595P1DD3FjJLtrWGoyQBLtpzNI4C/8Oe7CtSgDa6uSDhX5s21uRNz76yDfnoRHrtDQ6eaSFqmPzXX9GB3wnJhDNfcSEqzLrzf9MEVOd3arE6Qz+0U2fZKkBEvuaf9WTP27qQnEY34=; _gcl_au=1.1.1029900071.1721493831; __zlcmid=1NFmwZbeiA1OqsF; __zlcmid=1NFmwZbeiA1OqsF; BNES__gcl_au=IMY4/RYeqpi3hoXQ0YhSdcA5jLHS1v+7+W59G14Uqp6nyHI5N5y5ZhMMrrOhBaIUdsbcGuf3ZfM9aDWWu36UIA==; cf_clearance=8wJ6nzT7CF.D21_xTe8hQh_m7UFHNDXFs4d5_8I7qeE-1748274313-1.2.1.1-mwTGdMS9UXffBesdhms.Zdg56YcKKrB98qky.qgzBmE7lIOzJ53RcUW5oPuAkMREh63itlPRF3s.vpYXlWXwlUzPlbb_2rLBBzU9E7d7FVK133hydw6J1ILcRBYOiVw8PtJo4I6mXAJPbegQ0fiz2AZ0FSBq78x.nz.LBdPRMKry9NeAblMShPS8b5y.tIaj0OZz3UIhtVQ_pVK5PVZqT4j..JRp5uLloG2.0ACmH3BGJQ2rjBZLU9_l7EKl7KOlMArWfCVf6iv4EA2O361VEg8PDZnInGXhw2vdSOH8rEZNRmBv48sLLC9mb9Es9RZ2fGTfLvJpirJHMTx2WrskLUPPyG8eHXPynrtlkZDc18g; cf_clearance=8wJ6nzT7CF.D21_xTe8hQh_m7UFHNDXFs4d5_8I7qeE-1748274313-1.2.1.1-mwTGdMS9UXffBesdhms.Zdg56YcKKrB98qky.qgzBmE7lIOzJ53RcUW5oPuAkMREh63itlPRF3s.vpYXlWXwlUzPlbb_2rLBBzU9E7d7FVK133hydw6J1ILcRBYOiVw8PtJo4I6mXAJPbegQ0fiz2AZ0FSBq78x.nz.LBdPRMKry9NeAblMShPS8b5y.tIaj0OZz3UIhtVQ_pVK5PVZqT4j..JRp5uLloG2.0ACmH3BGJQ2rjBZLU9_l7EKl7KOlMArWfCVf6iv4EA2O361VEg8PDZnInGXhw2vdSOH8rEZNRmBv48sLLC9mb9Es9RZ2fGTfLvJpirJHMTx2WrskLUPPyG8eHXPynrtlkZDc18g; BNI_ServerId=LrUOKKYnbY6Z-DbMpDGcwJWQp16z_Mcg2BCg1-I8WIuq8fMIvVTqwiJMBC2YQUJydXStFiROfNpaT-j2F8hNfg==; ASP.NET_SessionId=5scmqbxjqh0glrrnf4dgwufq; BNES_ASP.NET_SessionId=vEewSvtiTJw5SBW2HZh4zntJv4Vzyrev8lcINyLIPaITvJvDTvElMyTnOoAfDIm4K0yNOAz7U+pOnNo3cJDdBUUreWXh7YBh; BNES___zlcmid=qlIzSC3mboMGlowQoED5dCQXM0aEyw6JmKz6B9JPgZn6nzNtnv7wi6i0NS6kt/M6K7EZS14cXkE=; BNES_cf_clearance=A+lszrbaVfem5BctKdiQ5CJlAiNlSpDngr0jaqOHX41nKE+kqvSJKG/7KLiXhOPUZXpLO7GZt1WtomNrnMWhDmdmt2ZT1Mzzg3M0nqaknuV0veP8DkdKwXlo4k8SCK7ALxc92ya0SToivAshsudIuFsOeV1opCYzPQUp/jugT3C+VAkcAl6gn3SwZpcfEbZCLXo0yNSHKHfFnXAfRJcG++13k0pQdPiStL70ox4jXlIZcNDx1qvu9kvlA3S+BXqVPnaD4/L2qHkAy6TyeuYabWuzYr4KJhQj0DLN1EsQDnt4JvxmChGg4DD4y/3tDj7cb9K7K/pd5nMqO4ghQceGXM5bNqKDIsYvwLdsUDZlXro0LAQXV6/CdQJb5bIlnRvvrURjJF3rPVYqhLKF9saHHsUZ2LvO+2GJSx9vScQ/dyo3i7ci82qj8wBjS3Nq/TwLHzpEZOtoCDeHE8smVpSBljElHu0BIBBh5x8SGgbf9cqH6MXmKbhyuVAlJcfrCZC1WdPJkFSFZp1QghTrAqq+ajREvPWnOZrtH0602XnDBkVBUIYAKgGYUSgngN1rC+MBR/smRpH5GwAPObIgQuprt3y0THMxgXH9JSvxkyVjC26gYzp4sd0sBA==' \
-      -H 'DNT: 1' \
-      -H 'Origin: https://www.familytreedna.com' \
-      -H 'Pragma: no-cache' \
-      -H 'Referer: {url}' \
-      -H 'Sec-Fetch-Dest: document' \
-      -H 'Sec-Fetch-Mode: navigate' \
-      -H 'Sec-Fetch-Site: same-origin' \
-      -H 'Sec-Fetch-User: ?1' \
-      -H 'Upgrade-Insecure-Requests: 1' \
-      -H 'User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36' \
-      -H 'sec-ch-ua: "Chromium";v="136", "Google Chrome";v="136", "Not.A/Brand";v="99"' \
-      -H 'sec-ch-ua-mobile: ?0' \
-      -H 'sec-ch-ua-platform: "macOS"' \
-      --data "@post_data.txt"
-    '''
-  
-    try:
-        html_output = os.popen(system_command).read()
-        df_html_tables = parse_html(html_output)
-    except Exception as e:
-        print(f"Unable to generate table due to {e}.")
-        return False
-
-    print('Done retrieving the data from the URL.')
-    
-    try:
-        df_html_tables.to_csv(converted_csv_file, index=False)
-        print(f'Created {converted_csv_file}.')
-    except:
-        return False
-    
-    return True
 
 
 def find_genetic_distance_v1(source, target):
@@ -238,10 +238,10 @@ def relation(gd):
         return 'Deeper analysis needed'
     
     
-# 1) Retrieve the file from the saved page(s), otherwise from the URL
-if not read_input_html_files(input_html_file) and not retrieve_data(url):
+# 1) Retrieve the file from the URL using POST
+if not retrieve_data(url):
     # raise RuntimeError(f"Unable to fetch data from {url}.")
-    print(f"Unable to fetch data from {input_html_file or url}.")
+    print(f"Unable to fetch data from {url}.")
     print(f"Falling back to cached file {converted_csv_file}.")
 
 # 2) Read the file
