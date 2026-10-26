@@ -7,6 +7,7 @@ Created on Sat Mar 14 18:58:12 2026
 """
 
 from itertools import permutations
+import argparse
 
 import numpy as np
 import pandas as pd
@@ -18,10 +19,17 @@ from urllib.parse import urlparse, urljoin
 import requests
 from bs4 import BeautifulSoup
 
-user_kit_id = 'XXXXXX'      # Replace with your actual Y111 kit ID from FamilyTreeDNA
-output_file = "output.csv"  # Replace with your CSV file path
-url = 'https://www.familytreedna.com/public/J2-Arab?iframe=ydna-results-overview'  # Replace with familytreedna.com website (or None)
-converted_csv_file = 'familytreedna.csv'
+parser = argparse.ArgumentParser()
+parser.add_argument('--user-id', required=True)
+parser.add_argument('--url', required=True)
+parser.add_argument('-o', '--output', required=True)
+parser.add_argument('--converted-url', default='familytreedna.csv')
+args = parser.parse_args()
+
+user_kit_id = args.user_id
+output_file = args.output
+url = args.url
+converted_csv_file = args.converted_url
 
 # Multi-copy find the max GD:
 # https://help.familytreedna.com/hc/en-us/articles/6019882931727-Understanding-Y-DNA-Multi-Copy-Markers
